@@ -10,9 +10,11 @@ server.use(cors()); // Giving permition to others CPU's gates comunicate with ou
 
 dotenv.config(); // Starting the dotenv aplication
 //const client = new MongoClient(process.env.URL_CONNECT_MONGO);
+//console.log(process.env.URL_CONNECT_MONGO);
 let DB;
 let users;
 let messages;
+
 //Function that gets all of the mongo data even when the server runs slowly
 async function gettingMongoData () {
 
@@ -30,15 +32,45 @@ async function gettingMongoData () {
 }
 gettingMongoData();
 
+function verifyingStatus () {
+    let atualTime = Date.now();
+    users.map(async object => {
+        if(atualTime - object.lastStatus >= 10000) {
+            await DB.collection("users").deleteOne({name: object.name});
+            await DB.collection("messages").insertOne({
+                from: object.name,
+                to: "Todos",
+                text: "sai da sala...",
+                type: "status",
+                time: dayjs().format("HH:mm:ss")
+            });
+        }
+    });
+    DB.collection("users").find().toArray().then(promise => {
+        users = promise;
+    });
+    DB.collection("messages").find().toArray().then(promise => {
+        messages = promise;
+    });
+}
+setTimeout(verifyingStatus, 1000);
+setInterval(verifyingStatus, 15000);
+
  server.get("/participants", (request, response) => {
     DB.collection("users").find().toArray().then( promise => {
         response.send(promise);
-        console.log(promise);
     }); 
     
-    // Verificar a forma que o front precisa desse dado, pq algo ta dando errado.
-    
- })
+ });
+
+ server.get("/messages", (request, response) => {
+    let user = request.headers.user;
+    const limit = request.query.limit;
+    let newMessages = messages.slice(-limit);
+    let messagesVerification = newMessages.filter(object => object.to === "Todos" || object.to === user || object.from === user);
+     
+    response.send(messagesVerification);
+ });
 
 server.post("/participants", (request, response) => {
     
@@ -46,6 +78,7 @@ server.post("/participants", (request, response) => {
         name: request.body.name,
         lastStatus: Date.now()
     }
+    
     let userLogin = {
         from: request.body.name,
         to: "Todos",
@@ -80,22 +113,52 @@ server.post("/participants", (request, response) => {
 });
     
 
-server.post ("/messages", (request, response) => {
-    users = DB.collection("users").find().toArray();
+server.post ("/messages", async (request, response) => {
+     users = await DB.collection("users").find().toArray();
+     let userMessage = {
+        from: request.headers.user,
+        to: request.body.to,
+        text: request.body.text,
+        type: request.body.type,
+        time: dayjs().format('HH:mm:ss')
+    }
+    
     if(request.body.to.length === 0 || request.body.text.length === 0) {
         response.sendStatus(422);
         return;
-    }
-    if(request.body.type !== "private_message" || request.body.type !== "message") {
+    };
+    let nameVerify = users.find(object => object.name === request.headers.user);
+
+    if(!nameVerify) {
         response.sendStatus(422);
+    };
+    if(request.body.type === "private_message" || request.body.type === "message") {
+        DB.collection("messages").insertOne(userMessage).then(() => {
+            DB.collection("messages").find().toArray().then(promise => {
+                messages = promise;
+                response.sendStatus(201);
+            });
+        })
+        return;
+    };
+    response.sendStatus(422);
+});
+
+server.post("/status", async (request, response) => {
+    let user = request.headers.user;
+    console.log(user);
+    let nameVerify = users.find(object => object.name === user);
+    if(!nameVerify) {
+        response.sendStatus(404);
         return;
     }
-    console.log(request.headers.user);
-    //if(request.headers.from)
-
-
-
+    await DB.collection("users").updateOne({name: user},{$set:{lastStatus: Date.now()}});
+    await DB.collection("users").find().toArray().then(promise => {
+        users = promise
+    });
+    response.sendStatus(200);
 });
+
 
 
 server.listen(5000);

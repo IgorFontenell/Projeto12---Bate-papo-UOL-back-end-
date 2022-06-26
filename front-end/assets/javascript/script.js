@@ -201,7 +201,7 @@ function renderizarMensagens() {
             : `<span> para </span>`
           }
 
-          <strong>${mensagem.to}</strong>
+          <strong>${mensagem.to}:</strong>
           <span class="text">${mensagem.text}</span>
         </div>
         <div class="acoes-mensagem">
