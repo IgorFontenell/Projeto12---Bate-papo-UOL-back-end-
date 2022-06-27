@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient } from "mongodb";
 import dayjs from "dayjs";
+import joi from 'joi';
 
 const server = express(); // Creating the server
 server.use(express.json()); // Making the server understand the JSON
@@ -10,8 +11,8 @@ server.use(cors()); // Giving permition to others CPU's gates comunicate with ou
 
 dotenv.config(); // Starting the dotenv aplication
 //const client = new MongoClient(process.env.URL_CONNECT_MONGO);
-//console.log(process.env.URL_CONNECT_MONGO);
-let DB;
+
+let DB; 
 let users;
 let messages;
 
@@ -21,8 +22,8 @@ async function gettingMongoData () {
     const client = new MongoClient("mongodb://127.0.0.1:27017"); // Creating the conection between our server and the mongo app.
     
     await client.connect().then(() => {
-        DB = client.db("BatePapoUol"); // Conecting the server with the BatePapoUol database in the mongo.
-        });
+        DB = client.db("BatePapoUol"); 
+        }); // Conecting the server with the BatePapoUol database in the mongo.
     DB.collection("users").find().toArray().then(promise => {
         users = promise;
     }); // Creating the varible that stocks our users names.
@@ -32,6 +33,7 @@ async function gettingMongoData () {
 }
 gettingMongoData();
 
+// Function that looks for all the users that are inative for more than 10s. It will delete then and send a message of status "User left the room". 
 function verifyingStatus () {
     let atualTime = Date.now();
     users.map(async object => {
@@ -53,26 +55,46 @@ function verifyingStatus () {
         messages = promise;
     });
 }
-setTimeout(verifyingStatus, 1000);
+setInterval(verifyingStatus, 1000);
 setInterval(verifyingStatus, 15000);
 
+function updateUsers(user) {
+    DB.collection("users").insertOne(user).then(() => {
+        DB.collection("users").find().toArray().then(promise => {
+            users = promise;
+        });
+     });
+};
+
+function updateMessages(message){
+    DB.collection("messages").insertOne(message).then(() => {
+        DB.collection("messages").find().toArray().then(promise => {
+            messages = promise;
+        });
+     });
+};
+// Sending to the front-end all users available in the sistem.
  server.get("/participants", (request, response) => {
     DB.collection("users").find().toArray().then( promise => {
         response.send(promise);
     }); 
-    
- });
+ }); 
+
 
  server.get("/messages", (request, response) => {
     let user = request.headers.user;
-    const limit = request.query.limit;
-    let newMessages = messages.slice(-limit);
-    let messagesVerification = newMessages.filter(object => object.to === "Todos" || object.to === user || object.from === user);
+    const limit = parseInt(request.query.limit);
+    let messagesVerification = messages.filter(object => object.to === "Todos" || object.to === user || object.from === user);
+    let newMessages = messagesVerification.slice(-limit);
+  
      
-    response.send(messagesVerification);
+    response.send(newMessages);
  });
 
 server.post("/participants", (request, response) => {
+    const userSchema = joi.object({
+        name: joi.string().required()
+    });
     
     let userInfo = {
         name: request.body.name,
@@ -86,7 +108,10 @@ server.post("/participants", (request, response) => {
         type: "status",
         time: dayjs().format('HH:mm:ss')
     }
-    if (request.body.name.length === 0) {
+    const validation = userSchema.validate(request.body);
+    
+    if(validation.error) {
+        
         response.sendStatus(422);
         return;
     }
@@ -96,19 +121,10 @@ server.post("/participants", (request, response) => {
         response.sendStatus(409);
         return;
     }
-            
-        
 
-     DB.collection("users").insertOne(userInfo).then(() => {
-        DB.collection("users").find().toArray().then(promise => {
-            users = promise;
-        });
-     });
-     DB.collection("messages").insertOne(userLogin).then(() => {
-        DB.collection("messages").find().toArray().then(promise => {
-            messages = promise;
-        });
-     });
+    updateUsers(userInfo);
+    updateMessages(userLogin); 
+    
     response.sendStatus(201);
 });
     
@@ -122,8 +138,14 @@ server.post ("/messages", async (request, response) => {
         type: request.body.type,
         time: dayjs().format('HH:mm:ss')
     }
+    const messageSchema = joi.object({
+        to: joi.string().required(),
+        text: joi.string().required(),
+        type: joi.string().required()
+    });
+    const validation = messageSchema.validate(request.body);
     
-    if(request.body.to.length === 0 || request.body.text.length === 0) {
+    if(validation.error) {
         response.sendStatus(422);
         return;
     };
@@ -131,14 +153,10 @@ server.post ("/messages", async (request, response) => {
 
     if(!nameVerify) {
         response.sendStatus(422);
+        return
     };
     if(request.body.type === "private_message" || request.body.type === "message") {
-        DB.collection("messages").insertOne(userMessage).then(() => {
-            DB.collection("messages").find().toArray().then(promise => {
-                messages = promise;
-                response.sendStatus(201);
-            });
-        })
+        updateMessages(userMessage);
         return;
     };
     response.sendStatus(422);
@@ -146,7 +164,6 @@ server.post ("/messages", async (request, response) => {
 
 server.post("/status", async (request, response) => {
     let user = request.headers.user;
-    console.log(user);
     let nameVerify = users.find(object => object.name === user);
     if(!nameVerify) {
         response.sendStatus(404);
